@@ -1,6 +1,9 @@
 DOMAIN = "min_max_history"
 CONF_SOURCE_SENSOR = "source_sensor"
 CONF_TIME_WINDOW = "time_window"
+CONF_TIME_UNIT = "time_unit"
 CONF_MAX = "max"
 CONF_MIN = "min"
 DEFAULT_TIME_WINDOW = 24
+DEFAULT_TIME_UNIT = "hour"
+TIME_UNITS = ["minute", "hour", "day", "week", "month", "year"]

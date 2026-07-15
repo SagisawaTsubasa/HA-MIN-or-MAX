@@ -9,30 +9,55 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, CONF_SOURCE_SENSOR, CONF_TIME_WINDOW, CONF_MAX, CONF_MIN
+from .const import (
+    DOMAIN,
+    CONF_SOURCE_SENSOR,
+    CONF_TIME_WINDOW,
+    CONF_TIME_UNIT,
+    CONF_MAX,
+    CONF_MIN,
+    DEFAULT_TIME_UNIT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
+UNIT_SECONDS = {
+    "minute": 60,
+    "hour": 3600,
+    "day": 86400,
+    "week": 604800,
+    "month": 2592000,   # 30 days
+    "year": 31536000,   # 365 days
+}
+
+def _to_seconds(value: int, unit: str) -> int:
+    return value * UNIT_SECONDS.get(unit, 3600)
+
+def _to_timedelta(value: int, unit: str) -> timedelta:
+    return timedelta(seconds=_to_seconds(value, unit))
+
 async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entities: AddEntitiesCallback):
     source = config_entry.data[CONF_SOURCE_SENSOR]
-    hours = config_entry.data[CONF_TIME_WINDOW]
+    value = config_entry.data[CONF_TIME_WINDOW]
+    unit = config_entry.data.get(CONF_TIME_UNIT, DEFAULT_TIME_UNIT)
     create_max = config_entry.data[CONF_MAX]
     create_min = config_entry.data[CONF_MIN]
 
     entities = []
     if create_max:
-        entities.append(MinMaxHistorySensor(hass, config_entry.entry_id, source, hours, "max"))
+        entities.append(MinMaxHistorySensor(hass, config_entry.entry_id, source, value, unit, "max"))
     if create_min:
-        entities.append(MinMaxHistorySensor(hass, config_entry.entry_id, source, hours, "min"))
+        entities.append(MinMaxHistorySensor(hass, config_entry.entry_id, source, value, unit, "min"))
 
     async_add_entities(entities)
 
 class MinMaxHistorySensor(SensorEntity, RestoreEntity):
-    def __init__(self, hass, entry_id, source_entity, hours, stat_type):
+    def __init__(self, hass, entry_id, source_entity, value, unit, stat_type):
         self.hass = hass
         self._entry_id = entry_id
         self._source = source_entity
-        self._hours = hours
+        self._value = value
+        self._unit = unit
         self._type = stat_type
         self._values = []
         self._attr_state = STATE_UNKNOWN
@@ -40,7 +65,15 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
 
     @property
     def name(self):
-        return f"{self._source.split('.')[-1]} {self._hours}h {self._type}"
+        short = {
+            "minute": "m",
+            "hour": "h",
+            "day": "d",
+            "week": "w",
+            "month": "mo",
+            "year": "y",
+        }.get(self._unit, self._unit)
+        return f"{self._source.split('.')[-1]} {self._value}{short} {self._type}"
 
     @property
     def unique_id(self):
@@ -85,7 +118,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             from homeassistant.components.recorder.history import state_changes_during_period
 
             now = dt_util.now()
-            start = now - timedelta(hours=self._hours)
+            start = now - _to_timedelta(self._value, self._unit)
 
             instance = get_instance(self.hass)
 
@@ -135,7 +168,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
 
     @callback
     def _async_cleanup(self, now=None):
-        cutoff = dt_util.now() - timedelta(hours=self._hours)
+        cutoff = dt_util.now() - _to_timedelta(self._value, self._unit)
         self._values = [(t, v) for t, v in self._values if t > cutoff]
 
         if not self._values:

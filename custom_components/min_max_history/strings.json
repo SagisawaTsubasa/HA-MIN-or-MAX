@@ -3,10 +3,11 @@
     "step": {
       "user": {
         "title": "Create Min/Max Sensor",
-        "description": "Select a source sensor and time window. The integration will automatically maintain max/min entities.",
+        "description": "Select a source sensor, time window and unit. The integration will automatically maintain max/min entities.",
         "data": {
           "source_sensor": "Source Sensor",
-          "time_window": "Time Window (hours)",
+          "time_window": "Time Window",
+          "time_unit": "Time Unit",
           "max": "Create Max Entity",
           "min": "Create Min Entity"
         }
@@ -14,6 +15,18 @@
     },
     "abort": {
       "already_configured": "This sensor is already configured"
+    }
+  },
+  "selector": {
+    "time_unit": {
+      "options": {
+        "minute": "Minute",
+        "hour": "Hour",
+        "day": "Day",
+        "week": "Week",
+        "month": "Month",
+        "year": "Year"
+      }
     }
   }
 }

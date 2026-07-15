@@ -7,9 +7,22 @@ from homeassistant.helpers.selector import (
     NumberSelectorConfig,
     NumberSelectorMode,
     BooleanSelector,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
-from .const import DOMAIN, CONF_SOURCE_SENSOR, CONF_TIME_WINDOW, CONF_MAX, CONF_MIN, DEFAULT_TIME_WINDOW
+from .const import (
+    DOMAIN,
+    CONF_SOURCE_SENSOR,
+    CONF_TIME_WINDOW,
+    CONF_TIME_UNIT,
+    CONF_MAX,
+    CONF_MIN,
+    DEFAULT_TIME_WINDOW,
+    DEFAULT_TIME_UNIT,
+    TIME_UNITS,
+)
 
 class MinMaxHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -18,11 +31,12 @@ class MinMaxHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             source = user_input[CONF_SOURCE_SENSOR]
             hours = user_input[CONF_TIME_WINDOW]
-            await self.async_set_unique_id(f"{source}_{hours}")
+            unit = user_input.get(CONF_TIME_UNIT, DEFAULT_TIME_UNIT)
+            await self.async_set_unique_id(f"{source}_{hours}_{unit}")
             self._abort_if_unique_id_configured()
 
             return self.async_create_entry(
-                title=f"{source.split('.')[-1]} {hours}h 极值",
+                title=f"{source.split('.')[-1]} {hours}{unit[0]} 极值",
                 data=user_input,
             )
 
@@ -33,7 +47,14 @@ class MinMaxHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     EntitySelectorConfig(domain="sensor")
                 ),
                 vol.Required(CONF_TIME_WINDOW, default=DEFAULT_TIME_WINDOW): NumberSelector(
-                    NumberSelectorConfig(min=1, max=168, mode=NumberSelectorMode.BOX, unit_of_measurement="h")
+                    NumberSelectorConfig(min=1, max=999, mode=NumberSelectorMode.BOX)
+                ),
+                vol.Required(CONF_TIME_UNIT, default=DEFAULT_TIME_UNIT): SelectSelector(
+                    SelectSelectorConfig(
+                        options=TIME_UNITS,
+                        mode=SelectSelectorMode.DROPDOWN,
+                        translation_key="time_unit",
+                    )
                 ),
                 vol.Required(CONF_MAX, default=True): BooleanSelector(),
                 vol.Required(CONF_MIN, default=True): BooleanSelector(),
