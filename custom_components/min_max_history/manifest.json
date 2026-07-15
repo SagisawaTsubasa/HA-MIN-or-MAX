@@ -1,0 +1,11 @@
+{
+  "domain": "min_max_history",
+  "name": "Min/Max History",
+  "version": "1.0.0",
+  "documentation": "https://github.com/yourusername/min_max_history",
+  "dependencies": [],
+  "codeowners": ["@kimi-ai"],
+  "config_flow": true,
+  "iot_class": "local_push",
+  "requirements": []
+}

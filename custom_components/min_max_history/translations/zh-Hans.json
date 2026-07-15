@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "创建极值传感器",
+        "description": "选择一个源传感器，自动维护指定时间窗口内的最大/最小值。",
+        "data": {
+          "source_sensor": "源传感器",
+          "time_window": "时间窗口（小时）",
+          "max": "创建最大值实体",
+          "min": "创建最小值实体"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "该传感器已配置"
+    }
+  }
+}

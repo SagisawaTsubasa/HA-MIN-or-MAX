@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Create Min/Max Sensor",
+        "description": "Select a source sensor and time window. The integration will automatically maintain max/min entities.",
+        "data": {
+          "source_sensor": "Source Sensor",
+          "time_window": "Time Window (hours)",
+          "max": "Create Max Entity",
+          "min": "Create Min Entity"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This sensor is already configured"
+    }
+  }
+}
