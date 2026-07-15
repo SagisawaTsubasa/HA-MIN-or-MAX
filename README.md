@@ -27,7 +27,7 @@
 
 ### 方式二：手动安装
 
-1. 下载本仓库的 `custom_components/min_max_history/` 文件夹
+1. 下载本仓库的 `min_max_history/` 文件夹
 2. 将其复制到 Home Assistant 的 `config/custom_components/` 目录下
 3. 重启 Home Assistant
 
