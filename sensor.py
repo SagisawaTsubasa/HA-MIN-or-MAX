@@ -47,7 +47,6 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         return f"{self._entry_id}_{self._type}"
 
     async def async_added_to_hass(self):
-        # 尝试恢复上次状态
         last_state = await self.async_get_last_state()
         if last_state and last_state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
             try:
@@ -55,10 +54,8 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             except ValueError:
                 pass
 
-        # 尝试从 recorder 读历史数据初始化
         await self._async_load_history()
 
-        # 如果源传感器当前有值，直接加入窗口
         source_state = self.hass.states.get(self._source)
         if source_state:
             self._attr_native_unit_of_measurement = source_state.attributes.get('unit_of_measurement')
@@ -70,14 +67,12 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                 except ValueError:
                     pass
 
-        # 监听源传感器变化
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass, [self._source], self._async_source_changed
             )
         )
 
-        # 每 5 分钟清理过期数据
         self.async_on_remove(
             async_track_time_interval(self.hass, self._async_cleanup, timedelta(minutes=5))
         )
@@ -143,7 +138,6 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         cutoff = dt_util.now() - timedelta(hours=self._hours)
         self._values = [(t, v) for t, v in self._values if t > cutoff]
 
-        # 如果窗口空了但源传感器当前有值，塞入当前值防止变 unknown
         if not self._values:
             source_state = self.hass.states.get(self._source)
             if source_state and source_state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):

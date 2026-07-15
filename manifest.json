@@ -3,9 +3,11 @@
   "name": "Min/Max History",
   "version": "1.0.0",
   "documentation": "https://github.com/yourusername/min_max_history",
+  "issue_tracker": "https://github.com/yourusername/min_max_history/issues",
   "dependencies": [],
   "codeowners": ["@kimi-ai"],
   "config_flow": true,
   "iot_class": "local_push",
-  "requirements": []
+  "requirements": [],
+  "homeassistant": "2023.4.0"
 }
