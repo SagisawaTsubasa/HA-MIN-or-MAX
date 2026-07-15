@@ -27,8 +27,8 @@
 
 ### 方式二：手动安装
 
-1. 下载本仓库的 `min_max_history/` 文件夹
-2. 将其复制到 Home Assistant 的 `config/custom_components/` 目录下
+1. 下载本仓库
+2. 将 `custom_components/min_max_history/` 文件夹复制到 Home Assistant 的 `config/custom_components/` 目录下
 3. 重启 Home Assistant
 
 ---
@@ -40,7 +40,7 @@
 3. 选择源传感器（如温度传感器）
 4. 设置时间窗口（小时）
 5. 勾选需要创建的实体（最大值 / 最小值）
-6. 提交后自动创建实体，可在开发者工具中查看
+6. 提交后自动创建实体
 
 ### 示例：配合 Mushroom Chip 卡片显示 24h 极值
 
@@ -63,35 +63,9 @@ chips:
 
 ---
 
-## 文件结构
-
-```
-custom_components/min_max_history/
-├── __init__.py          # 入口
-├── manifest.json        # 集成元数据
-├── const.py             # 常量定义
-├── config_flow.py       # UI 配置流程
-├── sensor.py            # 核心传感器逻辑
-├── strings.json         # 英文翻译
-└── translations/
-    └── zh-Hans.json     # 简体中文翻译
-```
-
----
-
-## 技术细节
-
-- 使用 `async_track_state_change_event` 监听源传感器变化
-- 使用 `async_track_time_interval` 每 5 分钟清理过期数据
-- 启动时通过 `state_changes_during_period` 从 Recorder 恢复历史
-- 继承 `RestoreEntity` 以在重启后保留最后已知状态
-- 支持 `unique_id`，可在 UI 中重命名和分配区域
-
----
-
 ## 兼容性
 
-- Home Assistant Core ≥ 2023.4（依赖 `async_forward_entry_setups`）
+- Home Assistant Core ≥ 2023.4
 - 需要启用 **Recorder** 组件（默认已启用）
 
 ---
@@ -102,5 +76,4 @@ MIT License
 
 ---
 
-**Author**: Kimi (Moonshot AI)  
-**Repository**: https://github.com/yourusername/min_max_history
+**Author**: Kimi (Moonshot AI)

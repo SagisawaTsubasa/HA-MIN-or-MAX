@@ -2,8 +2,8 @@
   "domain": "min_max_history",
   "name": "Min/Max History",
   "version": "1.0.0",
-  "documentation": "https://github.com/yourusername/min_max_history",
-  "issue_tracker": "https://github.com/yourusername/min_max_history/issues",
+  "documentation": "https://github.com/SagisawaTsubasa/HA-MIN-or-MAX",
+  "issue_tracker": "https://github.com/SagisawaTsubasa/HA-MIN-or-MAX/issues",
   "dependencies": [],
   "codeowners": [
     "@kimi-ai"
