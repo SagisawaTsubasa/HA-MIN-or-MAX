@@ -24,6 +24,15 @@ from .const import (
     TIME_UNITS,
 )
 
+UNIT_SHORT = {
+    "minute": "m",
+    "hour": "h",
+    "day": "d",
+    "week": "w",
+    "month": "mo",
+    "year": "y",
+}
+
 class MinMaxHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
@@ -32,11 +41,12 @@ class MinMaxHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             source = user_input[CONF_SOURCE_SENSOR]
             hours = user_input[CONF_TIME_WINDOW]
             unit = user_input.get(CONF_TIME_UNIT, DEFAULT_TIME_UNIT)
+            short = UNIT_SHORT.get(unit, unit)
             await self.async_set_unique_id(f"{source}_{hours}_{unit}")
             self._abort_if_unique_id_configured()
 
             return self.async_create_entry(
-                title=f"{source.split('.')[-1]} {hours}{unit[0]} 极值",
+                title=f"{source.split('.')[-1]} {hours}{short} 极值",
                 data=user_input,
             )
 

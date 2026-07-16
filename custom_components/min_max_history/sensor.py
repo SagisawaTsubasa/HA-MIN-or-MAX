@@ -26,15 +26,21 @@ UNIT_SECONDS = {
     "hour": 3600,
     "day": 86400,
     "week": 604800,
-    "month": 2592000,   # 30 days
-    "year": 31536000,   # 365 days
+    "month": 2592000,
+    "year": 31536000,
 }
 
-def _to_seconds(value: int, unit: str) -> int:
-    return value * UNIT_SECONDS.get(unit, 3600)
+UNIT_SHORT = {
+    "minute": "m",
+    "hour": "h",
+    "day": "d",
+    "week": "w",
+    "month": "mo",
+    "year": "y",
+}
 
 def _to_timedelta(value: int, unit: str) -> timedelta:
-    return timedelta(seconds=_to_seconds(value, unit))
+    return timedelta(seconds=value * UNIT_SECONDS.get(unit, 3600))
 
 async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entities: AddEntitiesCallback):
     source = config_entry.data[CONF_SOURCE_SENSOR]
@@ -62,24 +68,30 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         self._values = []
         self._attr_state = STATE_UNKNOWN
         self._attr_should_poll = False
+        self._friendly_name_base = None
 
     @property
     def name(self):
-        short = {
-            "minute": "m",
-            "hour": "h",
-            "day": "d",
-            "week": "w",
-            "month": "mo",
-            "year": "y",
-        }.get(self._unit, self._unit)
-        return f"{self._source.split('.')[-1]} {self._value}{short} {self._type}"
+        if self._friendly_name_base:
+            base = self._friendly_name_base
+        else:
+            source_state = self.hass.states.get(self._source)
+            if source_state and source_state.attributes.get("friendly_name"):
+                base = source_state.attributes["friendly_name"]
+            else:
+                base = self._source.split(".")[-1]
+        short = UNIT_SHORT.get(self._unit, self._unit)
+        return f"{base} {self._value}{short} {self._type}"
 
     @property
     def unique_id(self):
         return f"{self._entry_id}_{self._type}"
 
     async def async_added_to_hass(self):
+        source_state = self.hass.states.get(self._source)
+        if source_state and source_state.attributes.get("friendly_name"):
+            self._friendly_name_base = source_state.attributes["friendly_name"]
+
         last_state = await self.async_get_last_state()
         if last_state and last_state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
             try:
@@ -87,18 +99,34 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             except ValueError:
                 pass
 
-        await self._async_load_history()
+        history_loaded = await self._async_load_history()
+        if history_loaded and self._values:
+            self._recalculate()
+            self.async_write_ha_state()
 
-        source_state = self.hass.states.get(self._source)
         if source_state:
-            self._attr_native_unit_of_measurement = source_state.attributes.get('unit_of_measurement')
+            self._attr_native_unit_of_measurement = source_state.attributes.get("unit_of_measurement")
             if source_state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
                 try:
                     val = float(source_state.state)
-                    self._values.append((dt_util.now(), val))
+                    now = dt_util.now()
+                    self._values.append((now, val))
                     self._recalculate()
+                    self.async_write_ha_state()
                 except ValueError:
-                    pass
+                    _LOGGER.warning(
+                        "[%s] 源传感器当前状态无法解析: %s",
+                        self.unique_id,
+                        source_state.state,
+                    )
+            else:
+                _LOGGER.warning(
+                    "[%s] 源传感器当前为 %s，等它恢复或变化...",
+                    self.unique_id,
+                    source_state.state,
+                )
+        else:
+            _LOGGER.warning("[%s] 源传感器 %s 不存在", self.unique_id, self._source)
 
         self.async_on_remove(
             async_track_state_change_event(
@@ -110,9 +138,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             async_track_time_interval(self.hass, self._async_cleanup, timedelta(minutes=5))
         )
 
-        self.async_write_ha_state()
-
-    async def _async_load_history(self):
+    async def _async_load_history(self) -> bool:
         try:
             from homeassistant.components.recorder import get_instance
             from homeassistant.components.recorder.history import state_changes_during_period
@@ -128,7 +154,6 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                     start,
                     now,
                     [self._source],
-                    no_attributes=True,
                     include_start_time_state=True,
                 )
 
@@ -144,11 +169,12 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                         self._values.append((ts, val))
                     except (ValueError, TypeError):
                         continue
-
-            self._recalculate()
+                return True
+            return False
 
         except Exception as e:
-            _LOGGER.debug("Recorder history load failed: %s", e)
+            _LOGGER.error("[%s] 读取 recorder 历史失败: %s", self.unique_id, e)
+            return False
 
     @callback
     def _async_source_changed(self, event: Event):
@@ -160,7 +186,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             val = float(new_state.state)
             now = dt_util.now()
             self._values.append((now, val))
-            self._attr_native_unit_of_measurement = new_state.attributes.get('unit_of_measurement')
+            self._attr_native_unit_of_measurement = new_state.attributes.get("unit_of_measurement")
             self._recalculate()
             self.async_write_ha_state()
         except (ValueError, TypeError):
@@ -186,7 +212,6 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
     def _recalculate(self):
         if not self._values:
             return
-
         values = [v for t, v in self._values]
         result = max(values) if self._type == "max" else min(values)
         self._attr_state = round(result, 1)
