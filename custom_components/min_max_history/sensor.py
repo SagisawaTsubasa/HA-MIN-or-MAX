@@ -68,13 +68,21 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         self._unit = unit
         self._type = stat_type
         self._values = []
-        # HA 2024+ SensorEntity 读取 native_value，不是 _attr_state
         self._attr_native_value = None
         self._attr_native_unit_of_measurement = None
+        self._friendly_name_base = None
 
     @property
     def name(self):
-        base = self._source.split(".")[-1]
+        # 优先使用源传感器的 friendly_name，fallback 到 entity_id 尾部
+        if self._friendly_name_base:
+            base = self._friendly_name_base
+        else:
+            source_state = self.hass.states.get(self._source)
+            if source_state and source_state.attributes.get("friendly_name"):
+                base = source_state.attributes["friendly_name"]
+            else:
+                base = self._source.split(".")[-1]
         short = UNIT_SHORT.get(self._unit, self._unit)
         return f"{base} {self._value}{short} {self._type}"
 
@@ -97,6 +105,12 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
 
     async def async_added_to_hass(self):
         _LOGGER.warning("[%s] entity_id=%s 初始化开始", self.unique_id, self.entity_id)
+
+        # 读取源传感器的 friendly_name 并缓存
+        source_state = self.hass.states.get(self._source)
+        if source_state and source_state.attributes.get("friendly_name"):
+            self._friendly_name_base = source_state.attributes["friendly_name"]
+            _LOGGER.warning("[%s] 继承 friendly_name: %s", self.unique_id, self._friendly_name_base)
 
         # 1. 恢复上次状态（RestoreEntity）
         last_state = await self.async_get_last_state()
@@ -132,7 +146,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             async_track_time_interval(self.hass, self._async_cleanup, timedelta(minutes=5))
         )
 
-        # 5. 强制写入状态机（关键：HA 2024+ SensorEntity 需写入 native_value）
+        # 5. 强制写入状态机
         if self._attr_native_value is not None:
             self.async_write_ha_state()
             _LOGGER.warning(
