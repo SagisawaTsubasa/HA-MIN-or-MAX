@@ -44,7 +44,7 @@ def _to_timedelta(value: int, unit: str) -> timedelta:
 
 async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entities: AddEntitiesCallback):
     source = config_entry.data[CONF_SOURCE_SENSOR]
-    value = config_entry.data[CONF_TIME_WINDOW]
+    value = int(config_entry.data[CONF_TIME_WINDOW])
     unit = config_entry.data.get(CONF_TIME_UNIT, DEFAULT_TIME_UNIT)
     create_max = config_entry.data[CONF_MAX]
     create_min = config_entry.data[CONF_MIN]
@@ -58,6 +58,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
     async_add_entities(entities)
 
 class MinMaxHistorySensor(SensorEntity, RestoreEntity):
+    _attr_should_poll = False
+
     def __init__(self, hass, entry_id, source_entity, value, unit, stat_type):
         self.hass = hass
         self._entry_id = entry_id
@@ -66,13 +68,12 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         self._unit = unit
         self._type = stat_type
         self._values = []
-        self._attr_state = STATE_UNKNOWN
-        self._attr_should_poll = False
-        self._friendly_name_base = None
+        # HA 2024+ SensorEntity 读取 native_value，不是 _attr_state
+        self._attr_native_value = None
+        self._attr_native_unit_of_measurement = None
 
     @property
     def name(self):
-        # 用 entity_id 尾部作为基础名，避免超长中文 slug
         base = self._source.split(".")[-1]
         short = UNIT_SHORT.get(self._unit, self._unit)
         return f"{base} {self._value}{short} {self._type}"
@@ -87,20 +88,80 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         self._values.append((ts, val))
         self._recalculate()
 
+    def _recalculate(self):
+        if not self._values:
+            return
+        values = [v for t, v in self._values]
+        result = max(values) if self._type == "max" else min(values)
+        self._attr_native_value = round(result, 1)
+
+    async def async_added_to_hass(self):
+        _LOGGER.warning("[%s] entity_id=%s 初始化开始", self.unique_id, self.entity_id)
+
+        # 1. 恢复上次状态（RestoreEntity）
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
+            try:
+                restored = round(float(last_state.state), 1)
+                self._attr_native_value = restored
+                _LOGGER.warning("[%s] 恢复上次状态: %s", self.unique_id, restored)
+            except ValueError:
+                pass
+
+        # 2. 从 recorder 加载历史
+        history_loaded = await self._async_load_history()
+        if history_loaded and self._values:
+            self._recalculate()
+            _LOGGER.warning(
+                "[%s] 历史加载完成，当前 %s: %s",
+                self.unique_id,
+                self._type,
+                self._attr_native_value,
+            )
+
+        # 3. 摄入当前源传感器状态
+        self._ingest_current_state()
+
+        # 4. 注册监听
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [self._source], self._async_source_changed
+            )
+        )
+        self.async_on_remove(
+            async_track_time_interval(self.hass, self._async_cleanup, timedelta(minutes=5))
+        )
+
+        # 5. 强制写入状态机（关键：HA 2024+ SensorEntity 需写入 native_value）
+        if self._attr_native_value is not None:
+            self.async_write_ha_state()
+            _LOGGER.warning(
+                "[%s] 初始状态已写入: %s",
+                self.unique_id,
+                self._attr_native_value,
+            )
+        else:
+            async def _delayed_ingest(_):
+                if self._attr_native_value is None:
+                    _LOGGER.warning("[%s] 延迟兜底", self.unique_id)
+                    self._ingest_current_state()
+                    if self._attr_native_value is not None:
+                        self.async_write_ha_state()
+                        _LOGGER.warning("[%s] 延迟兜底写入: %s", self.unique_id, self._attr_native_value)
+                else:
+                    _LOGGER.warning("[%s] 延迟兜底：状态已就绪 %s", self.unique_id, self._attr_native_value)
+            self.async_on_remove(async_call_later(self.hass, 2, _delayed_ingest))
+
+        _LOGGER.warning("[%s] 初始化完成", self.unique_id)
+
     def _ingest_current_state(self):
         source_state = self.hass.states.get(self._source)
         if not source_state:
             _LOGGER.warning("[%s] 源传感器 %s 不存在", self.unique_id, self._source)
             return False
-
         if source_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
-            _LOGGER.warning(
-                "[%s] 源传感器当前为 %s，跳过",
-                self.unique_id,
-                source_state.state,
-            )
+            _LOGGER.warning("[%s] 源传感器当前为 %s", self.unique_id, source_state.state)
             return False
-
         try:
             val = float(source_state.state)
             self._attr_native_unit_of_measurement = source_state.attributes.get("unit_of_measurement")
@@ -110,88 +171,12 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                 self.unique_id,
                 val,
                 self._type,
-                self._attr_state,
+                self._attr_native_value,
             )
             return True
         except ValueError:
-            _LOGGER.warning(
-                "[%s] 源传感器状态无法解析为数字: %s",
-                self.unique_id,
-                source_state.state,
-            )
+            _LOGGER.warning("[%s] 源传感器状态无法解析: %s", self.unique_id, source_state.state)
             return False
-
-    async def async_added_to_hass(self):
-        _LOGGER.warning("[%s] 初始化开始", self.unique_id)
-        _LOGGER.warning("[%s] entity_id 将被分配为: %s", self.unique_id, self.entity_id)
-
-        source_state = self.hass.states.get(self._source)
-        if source_state and source_state.attributes.get("friendly_name"):
-            self._friendly_name_base = source_state.attributes["friendly_name"]
-            _LOGGER.warning("[%s] friendly_name: %s", self.unique_id, self._friendly_name_base)
-
-        last_state = await self.async_get_last_state()
-        if last_state and last_state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
-            try:
-                self._attr_state = round(float(last_state.state), 1)
-                _LOGGER.warning("[%s] 恢复上次状态: %s", self.unique_id, self._attr_state)
-            except ValueError:
-                pass
-
-        history_loaded = await self._async_load_history()
-        if history_loaded and self._values:
-            self._recalculate()
-            _LOGGER.warning(
-                "[%s] 历史加载完成，当前 %s: %s",
-                self.unique_id,
-                self._type,
-                self._attr_state,
-            )
-
-        ingested = self._ingest_current_state()
-        if not ingested:
-            _LOGGER.warning("[%s] 初始摄入失败，等源传感器更新或延迟兜底", self.unique_id)
-
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self._source], self._async_source_changed
-            )
-        )
-        _LOGGER.warning("[%s] 已注册状态变化监听", self.unique_id)
-
-        self.async_on_remove(
-            async_track_time_interval(self.hass, self._async_cleanup, timedelta(minutes=5))
-        )
-
-        if self._attr_state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
-            self.async_write_ha_state()
-            _LOGGER.warning(
-                "[%s] 初始状态已写入 entity_id=%s: %s",
-                self.unique_id,
-                self.entity_id,
-                self._attr_state,
-            )
-        else:
-            _LOGGER.warning("[%s] 初始状态仍为未知，等待延迟兜底", self.unique_id)
-
-            async def _delayed_ingest(_):
-                if self._attr_state in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
-                    _LOGGER.warning("[%s] 延迟兜底：状态仍为未知，尝试再次摄入", self.unique_id)
-                    self._ingest_current_state()
-                    if self._attr_state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
-                        self.async_write_ha_state()
-                        _LOGGER.warning(
-                            "[%s] 延迟兜底状态已写入 entity_id=%s: %s",
-                            self.unique_id,
-                            self.entity_id,
-                            self._attr_state,
-                        )
-                else:
-                    _LOGGER.warning("[%s] 延迟兜底：状态已就绪 %s", self.unique_id, self._attr_state)
-
-            self.async_on_remove(async_call_later(self.hass, 1, _delayed_ingest))
-
-        _LOGGER.warning("[%s] 初始化完成", self.unique_id)
 
     async def _async_load_history(self) -> bool:
         try:
@@ -205,17 +190,13 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             def _fetch():
                 try:
                     return state_changes_during_period(
-                        self.hass,
-                        start,
-                        now,
+                        self.hass, start, now,
                         entity_ids=[self._source],
                         include_start_time_state=True,
                     )
                 except TypeError:
                     return state_changes_during_period(
-                        self.hass,
-                        start,
-                        now,
+                        self.hass, start, now,
                         entity_id=self._source,
                     )
 
@@ -225,12 +206,12 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             states_list = []
             if isinstance(result, dict) and self._source in result:
                 states_list = result[self._source]
-                _LOGGER.warning("[%s] dict 格式，%s 条记录", self.unique_id, len(states_list))
+                _LOGGER.warning("[%s] dict 格式 %s 条", self.unique_id, len(states_list))
             elif isinstance(result, list):
                 states_list = result
-                _LOGGER.warning("[%s] list 格式，%s 条记录", self.unique_id, len(states_list))
+                _LOGGER.warning("[%s] list 格式 %s 条", self.unique_id, len(states_list))
             else:
-                _LOGGER.warning("[%s] recorder 无数据或格式未知", self.unique_id)
+                _LOGGER.warning("[%s] recorder 无数据", self.unique_id)
                 return False
 
             loaded = 0
@@ -245,11 +226,11 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                 except (ValueError, TypeError):
                     continue
 
-            _LOGGER.warning("[%s] 从 recorder 加载 %s 条有效历史", self.unique_id, loaded)
+            _LOGGER.warning("[%s] 加载 %s 条有效历史", self.unique_id, loaded)
             return loaded > 0
 
         except Exception as e:
-            _LOGGER.error("[%s] 读取 recorder 历史失败: %s", self.unique_id, e)
+            _LOGGER.error("[%s] 读取 recorder 失败: %s", self.unique_id, e)
             return False
 
     @callback
@@ -257,26 +238,20 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         new_state = event.data.get("new_state")
         if not new_state or new_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
             return
-
         try:
             val = float(new_state.state)
             self._attr_native_unit_of_measurement = new_state.attributes.get("unit_of_measurement")
             self._ingest_value(val)
             self.async_write_ha_state()
             _LOGGER.warning(
-                "[%s] 事件触发写入 entity_id=%s: %s -> %s = %s",
+                "[%s] 事件触发: %s -> %s = %s",
                 self.unique_id,
-                self.entity_id,
                 val,
                 self._type,
-                self._attr_state,
+                self._attr_native_value,
             )
         except (ValueError, TypeError):
-            _LOGGER.warning(
-                "[%s] 收到无效状态值: %s",
-                self.unique_id,
-                new_state.state,
-            )
+            _LOGGER.warning("[%s] 无效状态值: %s", self.unique_id, new_state.state)
 
     @callback
     def _async_cleanup(self, now=None):
@@ -300,17 +275,9 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
 
         if dropped > 0:
             _LOGGER.warning(
-                "[%s] 清理 %s 条过期数据，entity_id=%s 当前 %s: %s",
+                "[%s] 清理 %s 条过期数据，当前 %s: %s",
                 self.unique_id,
                 dropped,
-                self.entity_id,
                 self._type,
-                self._attr_state,
+                self._attr_native_value,
             )
-
-    def _recalculate(self):
-        if not self._values:
-            return
-        values = [v for t, v in self._values]
-        result = max(values) if self._type == "max" else min(values)
-        self._attr_state = round(result, 1)

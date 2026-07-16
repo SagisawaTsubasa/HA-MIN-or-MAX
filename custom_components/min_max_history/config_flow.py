@@ -39,7 +39,7 @@ class MinMaxHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None):
         if user_input is not None:
             source = user_input[CONF_SOURCE_SENSOR]
-            hours = user_input[CONF_TIME_WINDOW]
+            hours = int(user_input[CONF_TIME_WINDOW])
             unit = user_input.get(CONF_TIME_UNIT, DEFAULT_TIME_UNIT)
             short = UNIT_SHORT.get(unit, unit)
             await self.async_set_unique_id(f"{source}_{hours}_{unit}")
