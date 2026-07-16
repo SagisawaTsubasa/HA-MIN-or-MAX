@@ -93,8 +93,6 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             ts = dt_util.now()
         self._values.append((ts, val))
         self._recalculate()
-        # 同步上下文中必须用 schedule_update_ha_state，不能用 async_write_ha_state
-        self.schedule_update_ha_state()
 
     def _ingest_current_state(self):
         """读取当前源传感器状态并塞入窗口"""
@@ -152,7 +150,6 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         history_loaded = await self._async_load_history()
         if history_loaded and self._values:
             self._recalculate()
-            self.schedule_update_ha_state()
             _LOGGER.warning(
                 "[%s] 历史加载完成，当前 %s: %s",
                 self.unique_id,
@@ -160,7 +157,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                 self._attr_state,
             )
 
-        # 摄入当前状态（第一次兜底）
+        # 摄入当前状态
         ingested = self._ingest_current_state()
         if not ingested:
             _LOGGER.warning("[%s] 初始摄入失败，等源传感器更新或延迟兜底", self.unique_id)
@@ -178,15 +175,32 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             async_track_time_interval(self.hass, self._async_cleanup, timedelta(minutes=5))
         )
 
-        # 延迟1秒再次兜底
-        async def _delayed_ingest(_):
-            if self._attr_state in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
-                _LOGGER.warning("[%s] 延迟兜底：状态仍为未知，尝试再次摄入", self.unique_id)
-                self._ingest_current_state()
-            else:
-                _LOGGER.warning("[%s] 延迟兜底：状态已就绪 %s", self.unique_id, self._attr_state)
+        # 强制写入初始状态 — 关键修复：await 确保状态机真正写入
+        if self._attr_state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
+            try:
+                await self.async_write_ha_state()
+                _LOGGER.warning("[%s] 初始状态已写入状态机: %s", self.unique_id, self._attr_state)
+            except Exception as e:
+                _LOGGER.error("[%s] 写入初始状态失败: %s", self.unique_id, e)
+        else:
+            _LOGGER.warning("[%s] 初始状态仍为未知，等待延迟兜底", self.unique_id)
 
-        self.async_on_remove(async_call_later(self.hass, 1, _delayed_ingest))
+            # 延迟兜底：如果状态还是 unknown，1秒后重试
+            async def _delayed_ingest(_):
+                if self._attr_state in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
+                    _LOGGER.warning("[%s] 延迟兜底：状态仍为未知，尝试再次摄入", self.unique_id)
+                    self._ingest_current_state()
+                    if self._attr_state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
+                        try:
+                            await self.async_write_ha_state()
+                            _LOGGER.warning("[%s] 延迟兜底状态已写入: %s", self.unique_id, self._attr_state)
+                        except Exception as e:
+                            _LOGGER.error("[%s] 延迟兜底写入失败: %s", self.unique_id, e)
+                else:
+                    _LOGGER.warning("[%s] 延迟兜底：状态已就绪 %s", self.unique_id, self._attr_state)
+
+            self.async_on_remove(async_call_later(self.hass, 1, _delayed_ingest))
+
         _LOGGER.warning("[%s] 初始化完成", self.unique_id)
 
     async def _async_load_history(self) -> bool:
@@ -218,7 +232,6 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             result = await instance.async_add_executor_job(_fetch)
             _LOGGER.warning("[%s] recorder 返回类型: %s", self.unique_id, type(result).__name__)
 
-            # 兼容不同返回格式：dict 或 list
             states_list = []
             if isinstance(result, dict) and self._source in result:
                 states_list = result[self._source]
@@ -259,6 +272,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             val = float(new_state.state)
             self._attr_native_unit_of_measurement = new_state.attributes.get("unit_of_measurement")
             self._ingest_value(val)
+            self.schedule_update_ha_state()
             _LOGGER.warning(
                 "[%s] 事件触发: %s -> %s = %s",
                 self.unique_id,
