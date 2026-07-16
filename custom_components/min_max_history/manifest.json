@@ -1,7 +1,7 @@
 {
   "domain": "min_max_history",
   "name": "Min/Max History",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "documentation": "https://github.com/SagisawaTsubasa/HA-MIN-or-MAX",
   "issue_tracker": "https://github.com/SagisawaTsubasa/HA-MIN-or-MAX/issues",
   "dependencies": [],

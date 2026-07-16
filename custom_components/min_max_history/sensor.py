@@ -72,14 +72,8 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
 
     @property
     def name(self):
-        if self._friendly_name_base:
-            base = self._friendly_name_base
-        else:
-            source_state = self.hass.states.get(self._source)
-            if source_state and source_state.attributes.get("friendly_name"):
-                base = source_state.attributes["friendly_name"]
-            else:
-                base = self._source.split(".")[-1]
+        # 用 entity_id 尾部作为基础名，避免超长中文 slug
+        base = self._source.split(".")[-1]
         short = UNIT_SHORT.get(self._unit, self._unit)
         return f"{base} {self._value}{short} {self._type}"
 
@@ -88,14 +82,12 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         return f"{self._entry_id}_{self._type}"
 
     def _ingest_value(self, val: float, ts=None):
-        """将数值塞入窗口并重新计算，同步方法"""
         if ts is None:
             ts = dt_util.now()
         self._values.append((ts, val))
         self._recalculate()
 
     def _ingest_current_state(self):
-        """读取当前源传感器状态并塞入窗口"""
         source_state = self.hass.states.get(self._source)
         if not source_state:
             _LOGGER.warning("[%s] 源传感器 %s 不存在", self.unique_id, self._source)
@@ -131,13 +123,13 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
 
     async def async_added_to_hass(self):
         _LOGGER.warning("[%s] 初始化开始", self.unique_id)
+        _LOGGER.warning("[%s] entity_id 将被分配为: %s", self.unique_id, self.entity_id)
 
         source_state = self.hass.states.get(self._source)
         if source_state and source_state.attributes.get("friendly_name"):
             self._friendly_name_base = source_state.attributes["friendly_name"]
             _LOGGER.warning("[%s] friendly_name: %s", self.unique_id, self._friendly_name_base)
 
-        # 恢复上次状态
         last_state = await self.async_get_last_state()
         if last_state and last_state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
             try:
@@ -146,7 +138,6 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             except ValueError:
                 pass
 
-        # 从 recorder 加载历史
         history_loaded = await self._async_load_history()
         if history_loaded and self._values:
             self._recalculate()
@@ -157,12 +148,10 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                 self._attr_state,
             )
 
-        # 摄入当前状态
         ingested = self._ingest_current_state()
         if not ingested:
             _LOGGER.warning("[%s] 初始摄入失败，等源传感器更新或延迟兜底", self.unique_id)
 
-        # 注册状态变化监听
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass, [self._source], self._async_source_changed
@@ -170,15 +159,18 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         )
         _LOGGER.warning("[%s] 已注册状态变化监听", self.unique_id)
 
-        # 注册定时清理
         self.async_on_remove(
             async_track_time_interval(self.hass, self._async_cleanup, timedelta(minutes=5))
         )
 
-        # 强制写入初始状态 — async_write_ha_state 不是 coroutine，不能 await
         if self._attr_state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
             self.async_write_ha_state()
-            _LOGGER.warning("[%s] 初始状态已写入状态机: %s", self.unique_id, self._attr_state)
+            _LOGGER.warning(
+                "[%s] 初始状态已写入 entity_id=%s: %s",
+                self.unique_id,
+                self.entity_id,
+                self._attr_state,
+            )
         else:
             _LOGGER.warning("[%s] 初始状态仍为未知，等待延迟兜底", self.unique_id)
 
@@ -188,7 +180,12 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                     self._ingest_current_state()
                     if self._attr_state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
                         self.async_write_ha_state()
-                        _LOGGER.warning("[%s] 延迟兜底状态已写入: %s", self.unique_id, self._attr_state)
+                        _LOGGER.warning(
+                            "[%s] 延迟兜底状态已写入 entity_id=%s: %s",
+                            self.unique_id,
+                            self.entity_id,
+                            self._attr_state,
+                        )
                 else:
                     _LOGGER.warning("[%s] 延迟兜底：状态已就绪 %s", self.unique_id, self._attr_state)
 
@@ -267,8 +264,9 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             self._ingest_value(val)
             self.async_write_ha_state()
             _LOGGER.warning(
-                "[%s] 事件触发: %s -> %s = %s",
+                "[%s] 事件触发写入 entity_id=%s: %s -> %s = %s",
                 self.unique_id,
+                self.entity_id,
                 val,
                 self._type,
                 self._attr_state,
@@ -301,7 +299,14 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         self.async_write_ha_state()
 
         if dropped > 0:
-            _LOGGER.warning("[%s] 清理 %s 条过期数据，当前 %s: %s", self.unique_id, dropped, self._type, self._attr_state)
+            _LOGGER.warning(
+                "[%s] 清理 %s 条过期数据，entity_id=%s 当前 %s: %s",
+                self.unique_id,
+                dropped,
+                self.entity_id,
+                self._type,
+                self._attr_state,
+            )
 
     def _recalculate(self):
         if not self._values:
