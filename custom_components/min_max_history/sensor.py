@@ -87,7 +87,17 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
     def unique_id(self):
         return f"{self._entry_id}_{self._type}"
 
+    def _ingest_value(self, val: float, ts=None):
+        """将数值塞入窗口并重新计算，同步方法"""
+        if ts is None:
+            ts = dt_util.now()
+        self._values.append((ts, val))
+        self._recalculate()
+        # 同步上下文中必须用 schedule_update_ha_state，不能用 async_write_ha_state
+        self.schedule_update_ha_state()
+
     def _ingest_current_state(self):
+        """读取当前源传感器状态并塞入窗口"""
         source_state = self.hass.states.get(self._source)
         if not source_state:
             _LOGGER.warning("[%s] 源传感器 %s 不存在", self.unique_id, self._source)
@@ -103,12 +113,9 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
 
         try:
             val = float(source_state.state)
-            now = dt_util.now()
-            self._values.append((now, val))
             self._attr_native_unit_of_measurement = source_state.attributes.get("unit_of_measurement")
-            self._recalculate()
-            self.async_write_ha_state()
-            _LOGGER.info(
+            self._ingest_value(val)
+            _LOGGER.warning(
                 "[%s] 摄入当前值 %s -> %s = %s",
                 self.unique_id,
                 val,
@@ -125,47 +132,62 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             return False
 
     async def async_added_to_hass(self):
+        _LOGGER.warning("[%s] 初始化开始", self.unique_id)
+
         source_state = self.hass.states.get(self._source)
         if source_state and source_state.attributes.get("friendly_name"):
             self._friendly_name_base = source_state.attributes["friendly_name"]
-            _LOGGER.info("[%s] friendly_name: %s", self.unique_id, self._friendly_name_base)
+            _LOGGER.warning("[%s] friendly_name: %s", self.unique_id, self._friendly_name_base)
 
+        # 恢复上次状态
         last_state = await self.async_get_last_state()
         if last_state and last_state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
             try:
                 self._attr_state = round(float(last_state.state), 1)
+                _LOGGER.warning("[%s] 恢复上次状态: %s", self.unique_id, self._attr_state)
             except ValueError:
                 pass
 
+        # 从 recorder 加载历史
         history_loaded = await self._async_load_history()
         if history_loaded and self._values:
             self._recalculate()
-            self.async_write_ha_state()
-            _LOGGER.info(
+            self.schedule_update_ha_state()
+            _LOGGER.warning(
                 "[%s] 历史加载完成，当前 %s: %s",
                 self.unique_id,
                 self._type,
                 self._attr_state,
             )
 
-        self._ingest_current_state()
+        # 摄入当前状态（第一次兜底）
+        ingested = self._ingest_current_state()
+        if not ingested:
+            _LOGGER.warning("[%s] 初始摄入失败，等源传感器更新或延迟兜底", self.unique_id)
 
+        # 注册状态变化监听
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass, [self._source], self._async_source_changed
             )
         )
+        _LOGGER.warning("[%s] 已注册状态变化监听", self.unique_id)
 
+        # 注册定时清理
         self.async_on_remove(
             async_track_time_interval(self.hass, self._async_cleanup, timedelta(minutes=5))
         )
 
+        # 延迟1秒再次兜底
         async def _delayed_ingest(_):
             if self._attr_state in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
-                _LOGGER.info("[%s] 延迟兜底：状态仍为未知，尝试再次摄入", self.unique_id)
+                _LOGGER.warning("[%s] 延迟兜底：状态仍为未知，尝试再次摄入", self.unique_id)
                 self._ingest_current_state()
+            else:
+                _LOGGER.warning("[%s] 延迟兜底：状态已就绪 %s", self.unique_id, self._attr_state)
 
         self.async_on_remove(async_call_later(self.hass, 1, _delayed_ingest))
+        _LOGGER.warning("[%s] 初始化完成", self.unique_id)
 
     async def _async_load_history(self) -> bool:
         try:
@@ -176,12 +198,8 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             start = now - _to_timedelta(self._value, self._unit)
             instance = get_instance(self.hass)
 
-            # 兼容不同 HA 版本的 API 签名
-            # 新版: entity_ids (list), include_start_time_state
-            # 旧版: entity_id (str), 无 include_start_time_state
             def _fetch():
                 try:
-                    # 先尝试新版 API
                     return state_changes_during_period(
                         self.hass,
                         start,
@@ -190,7 +208,6 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                         include_start_time_state=True,
                     )
                 except TypeError:
-                    # fallback 旧版 API：entity_id 传字符串，无 include_start_time_state
                     return state_changes_during_period(
                         self.hass,
                         start,
@@ -199,23 +216,34 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                     )
 
             result = await instance.async_add_executor_job(_fetch)
+            _LOGGER.warning("[%s] recorder 返回类型: %s", self.unique_id, type(result).__name__)
 
-            if result and self._source in result:
-                loaded = 0
-                for state in result[self._source]:
-                    if state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
-                        continue
-                    try:
-                        val = float(state.state)
-                        ts = state.last_changed or dt_util.now()
-                        self._values.append((ts, val))
-                        loaded += 1
-                    except (ValueError, TypeError):
-                        continue
-                _LOGGER.info("[%s] 从 recorder 加载 %s 条历史", self.unique_id, loaded)
-                return True
-            _LOGGER.info("[%s] recorder 无历史数据", self.unique_id)
-            return False
+            # 兼容不同返回格式：dict 或 list
+            states_list = []
+            if isinstance(result, dict) and self._source in result:
+                states_list = result[self._source]
+                _LOGGER.warning("[%s] dict 格式，%s 条记录", self.unique_id, len(states_list))
+            elif isinstance(result, list):
+                states_list = result
+                _LOGGER.warning("[%s] list 格式，%s 条记录", self.unique_id, len(states_list))
+            else:
+                _LOGGER.warning("[%s] recorder 无数据或格式未知", self.unique_id)
+                return False
+
+            loaded = 0
+            for state in states_list:
+                if state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
+                    continue
+                try:
+                    val = float(state.state)
+                    ts = state.last_changed or dt_util.now()
+                    self._values.append((ts, val))
+                    loaded += 1
+                except (ValueError, TypeError):
+                    continue
+
+            _LOGGER.warning("[%s] 从 recorder 加载 %s 条有效历史", self.unique_id, loaded)
+            return loaded > 0
 
         except Exception as e:
             _LOGGER.error("[%s] 读取 recorder 历史失败: %s", self.unique_id, e)
@@ -229,12 +257,9 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
 
         try:
             val = float(new_state.state)
-            now = dt_util.now()
-            self._values.append((now, val))
             self._attr_native_unit_of_measurement = new_state.attributes.get("unit_of_measurement")
-            self._recalculate()
-            self.async_write_ha_state()
-            _LOGGER.debug(
+            self._ingest_value(val)
+            _LOGGER.warning(
                 "[%s] 事件触发: %s -> %s = %s",
                 self.unique_id,
                 val,
@@ -261,15 +286,15 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                 try:
                     val = float(source_state.state)
                     self._values.append((dt_util.now(), val))
-                    _LOGGER.info("[%s] 窗口为空，塞入当前值兜底", self.unique_id)
+                    _LOGGER.warning("[%s] 窗口为空，塞入当前值兜底", self.unique_id)
                 except ValueError:
                     pass
 
         self._recalculate()
-        self.async_write_ha_state()
+        self.schedule_update_ha_state()
 
         if dropped > 0:
-            _LOGGER.debug("[%s] 清理 %s 条过期数据，当前 %s: %s", self.unique_id, dropped, self._type, self._attr_state)
+            _LOGGER.warning("[%s] 清理 %s 条过期数据，当前 %s: %s", self.unique_id, dropped, self._type, self._attr_state)
 
     def _recalculate(self):
         if not self._values:
