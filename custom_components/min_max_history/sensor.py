@@ -104,13 +104,13 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         self._attr_native_value = round(result, 1)
 
     async def async_added_to_hass(self):
-        _LOGGER.warning("[%s] entity_id=%s 初始化开始", self.unique_id, self.entity_id)
+        _LOGGER.debug("[%s] entity_id=%s 初始化开始", self.unique_id, self.entity_id)
 
         # 读取源传感器的 friendly_name 并缓存
         source_state = self.hass.states.get(self._source)
         if source_state and source_state.attributes.get("friendly_name"):
             self._friendly_name_base = source_state.attributes["friendly_name"]
-            _LOGGER.warning("[%s] 继承 friendly_name: %s", self.unique_id, self._friendly_name_base)
+            _LOGGER.debug("[%s] 继承 friendly_name: %s", self.unique_id, self._friendly_name_base)
 
         # 1. 恢复上次状态（RestoreEntity）
         last_state = await self.async_get_last_state()
@@ -118,7 +118,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             try:
                 restored = round(float(last_state.state), 1)
                 self._attr_native_value = restored
-                _LOGGER.warning("[%s] 恢复上次状态: %s", self.unique_id, restored)
+                _LOGGER.debug("[%s] 恢复上次状态: %s", self.unique_id, restored)
             except ValueError:
                 pass
 
@@ -126,7 +126,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         history_loaded = await self._async_load_history()
         if history_loaded and self._values:
             self._recalculate()
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[%s] 历史加载完成，当前 %s: %s",
                 self.unique_id,
                 self._type,
@@ -149,7 +149,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         # 5. 强制写入状态机
         if self._attr_native_value is not None:
             self.async_write_ha_state()
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[%s] 初始状态已写入: %s",
                 self.unique_id,
                 self._attr_native_value,
@@ -157,30 +157,30 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         else:
             async def _delayed_ingest(_):
                 if self._attr_native_value is None:
-                    _LOGGER.warning("[%s] 延迟兜底", self.unique_id)
+                    _LOGGER.debug("[%s] 延迟兜底", self.unique_id)
                     self._ingest_current_state()
                     if self._attr_native_value is not None:
                         self.async_write_ha_state()
-                        _LOGGER.warning("[%s] 延迟兜底写入: %s", self.unique_id, self._attr_native_value)
+                        _LOGGER.debug("[%s] 延迟兜底写入: %s", self.unique_id, self._attr_native_value)
                 else:
-                    _LOGGER.warning("[%s] 延迟兜底：状态已就绪 %s", self.unique_id, self._attr_native_value)
+                    _LOGGER.debug("[%s] 延迟兜底：状态已就绪 %s", self.unique_id, self._attr_native_value)
             self.async_on_remove(async_call_later(self.hass, 2, _delayed_ingest))
 
-        _LOGGER.warning("[%s] 初始化完成", self.unique_id)
+        _LOGGER.debug("[%s] 初始化完成", self.unique_id)
 
     def _ingest_current_state(self):
         source_state = self.hass.states.get(self._source)
         if not source_state:
-            _LOGGER.warning("[%s] 源传感器 %s 不存在", self.unique_id, self._source)
+            _LOGGER.debug("[%s] 源传感器 %s 不存在", self.unique_id, self._source)
             return False
         if source_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, None):
-            _LOGGER.warning("[%s] 源传感器当前为 %s", self.unique_id, source_state.state)
+            _LOGGER.debug("[%s] 源传感器当前为 %s", self.unique_id, source_state.state)
             return False
         try:
             val = float(source_state.state)
             self._attr_native_unit_of_measurement = source_state.attributes.get("unit_of_measurement")
             self._ingest_value(val)
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[%s] 摄入当前值 %s -> %s = %s",
                 self.unique_id,
                 val,
@@ -189,7 +189,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             )
             return True
         except ValueError:
-            _LOGGER.warning("[%s] 源传感器状态无法解析: %s", self.unique_id, source_state.state)
+            _LOGGER.debug("[%s] 源传感器状态无法解析: %s", self.unique_id, source_state.state)
             return False
 
     async def _async_load_history(self) -> bool:
@@ -202,30 +202,24 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             instance = get_instance(self.hass)
 
             def _fetch():
-                try:
-                    return state_changes_during_period(
-                        self.hass, start, now,
-                        entity_ids=[self._source],
-                        include_start_time_state=True,
-                    )
-                except TypeError:
-                    return state_changes_during_period(
-                        self.hass, start, now,
-                        entity_id=self._source,
-                    )
+                return state_changes_during_period(
+                    self.hass, start, now,
+                    entity_id=self._source,
+                    include_start_time_state=True,
+                )
 
             result = await instance.async_add_executor_job(_fetch)
-            _LOGGER.warning("[%s] recorder 返回类型: %s", self.unique_id, type(result).__name__)
+            _LOGGER.debug("[%s] recorder 返回类型: %s", self.unique_id, type(result).__name__)
 
             states_list = []
             if isinstance(result, dict) and self._source in result:
                 states_list = result[self._source]
-                _LOGGER.warning("[%s] dict 格式 %s 条", self.unique_id, len(states_list))
+                _LOGGER.debug("[%s] dict 格式 %s 条", self.unique_id, len(states_list))
             elif isinstance(result, list):
                 states_list = result
-                _LOGGER.warning("[%s] list 格式 %s 条", self.unique_id, len(states_list))
+                _LOGGER.debug("[%s] list 格式 %s 条", self.unique_id, len(states_list))
             else:
-                _LOGGER.warning("[%s] recorder 无数据", self.unique_id)
+                _LOGGER.debug("[%s] recorder 无数据", self.unique_id)
                 return False
 
             loaded = 0
@@ -240,7 +234,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                 except (ValueError, TypeError):
                     continue
 
-            _LOGGER.warning("[%s] 加载 %s 条有效历史", self.unique_id, loaded)
+            _LOGGER.debug("[%s] 加载 %s 条有效历史", self.unique_id, loaded)
             return loaded > 0
 
         except Exception as e:
@@ -257,7 +251,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
             self._attr_native_unit_of_measurement = new_state.attributes.get("unit_of_measurement")
             self._ingest_value(val)
             self.async_write_ha_state()
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[%s] 事件触发: %s -> %s = %s",
                 self.unique_id,
                 val,
@@ -265,7 +259,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                 self._attr_native_value,
             )
         except (ValueError, TypeError):
-            _LOGGER.warning("[%s] 无效状态值: %s", self.unique_id, new_state.state)
+            _LOGGER.debug("[%s] 无效状态值: %s", self.unique_id, new_state.state)
 
     @callback
     def _async_cleanup(self, now=None):
@@ -280,7 +274,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
                 try:
                     val = float(source_state.state)
                     self._values.append((dt_util.now(), val))
-                    _LOGGER.warning("[%s] 窗口为空，塞入当前值兜底", self.unique_id)
+                    _LOGGER.debug("[%s] 窗口为空，塞入当前值兜底", self.unique_id)
                 except ValueError:
                     pass
 
@@ -288,7 +282,7 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         self.async_write_ha_state()
 
         if dropped > 0:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[%s] 清理 %s 条过期数据，当前 %s: %s",
                 self.unique_id,
                 dropped,
