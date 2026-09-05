@@ -13,8 +13,29 @@
         }
       }
     },
+    "error": {
+      "no_type_selected": "Select at least one of max or min."
+    },
     "abort": {
       "already_configured": "This sensor is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Edit Min/Max Sensor",
+        "description": "Change the source sensor, time window or unit. The entry reloads with the new settings.",
+        "data": {
+          "source_sensor": "Source Sensor",
+          "time_window": "Time Window",
+          "time_unit": "Time Unit",
+          "max": "Create Max Entity",
+          "min": "Create Min Entity"
+        }
+      }
+    },
+    "error": {
+      "no_type_selected": "Select at least one of max or min."
     }
   },
   "selector": {

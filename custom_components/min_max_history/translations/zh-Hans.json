@@ -13,8 +13,29 @@
         }
       }
     },
+    "error": {
+      "no_type_selected": "请至少选择最大值或最小值其中一项。"
+    },
     "abort": {
       "already_configured": "该传感器已配置"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "编辑极值传感器",
+        "description": "修改源传感器、时间窗口或单位，保存后条目将自动重载。",
+        "data": {
+          "source_sensor": "源传感器",
+          "time_window": "时间窗口",
+          "time_unit": "时间单位",
+          "max": "创建最大值实体",
+          "min": "创建最小值实体"
+        }
+      }
+    },
+    "error": {
+      "no_type_selected": "请至少选择最大值或最小值其中一项。"
     }
   },
   "selector": {
