@@ -71,7 +71,7 @@ class MinMaxHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(
-                    title=f"{source.split('.')[-1]} {amount}{short} 极值",
+                    title=f"{source.split('.')[-1]} {amount}{short} max/min",
                     data=user_input,
                 )
 

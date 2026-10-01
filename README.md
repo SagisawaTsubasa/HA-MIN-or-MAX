@@ -69,7 +69,7 @@ chips:
 
 ## 兼容性
 
-- Home Assistant Core ≥ 2023.4
+- Home Assistant Core ≥ 2024.11（与 hacs.json 声明一致）
 - 需要启用 **Recorder** 组件（默认已启用）
 
 ---
@@ -81,3 +81,19 @@ MIT License
 ---
 
 **Author**: Kimi (Moonshot AI)
+
+## 更新日志 / Changelog
+
+### 1.3.1
+- 修复：补充 `translations/en.json`——HA 运行时只读 translations 目录，此前英文界面无法获得流程文案（strings.json 不参与运行时）  
+  Fixed: added `translations/en.json` — HA runtime only reads the translations directory, so English users never got the flow strings
+- 优化：新建条目标题去掉硬编码中文（改为语言中性的 `max/min` 后缀）  
+  Improved: new entry titles drop the hardcoded Chinese suffix (language-neutral `max/min`)
+- 清理：ruff check 告警清零（import 排序、未用导入、`logging.exception` 规范、嵌套 if 合并；不含 ruff format 重排）  
+  Chores: ruff check warnings cleared (import order, unused imports, logging.exception style, nested if; no reformat)
+- 评估记录：实体名刻意保持动态跟随源传感器 friendly_name，与 `_attr_has_entity_name` 的设备名前缀语义冲突，故不引入（审计遗留项 L5 的结论）  
+  Note: entity names intentionally follow the source sensor's friendly_name, which conflicts with `_attr_has_entity_name` device-prefix semantics — audit item L5 closed as won't-fix
+
+### 1.3.0（2026-09-05 审计修复批次）
+- 采样上限 20000 + 相邻对降采样、恢复值入窗、relativedelta 日历窗口等审计修复  
+  September audit fixes: sample cap with pairwise downsampling, restore-into-window, relativedelta calendar windows

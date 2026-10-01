@@ -6,7 +6,6 @@ import logging
 from datetime import datetime, timedelta
 
 from dateutil.relativedelta import relativedelta
-
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -57,7 +56,9 @@ async def _async_fetch_history(
     """Fetch recorder samples since ``start`` — one query shared by max/min."""
     try:
         from homeassistant.components.recorder import get_instance
-        from homeassistant.components.recorder.history import state_changes_during_period
+        from homeassistant.components.recorder.history import (
+            state_changes_during_period,
+        )
 
         def _fetch():
             return state_changes_during_period(
@@ -70,8 +71,8 @@ async def _async_fetch_history(
             )
 
         result = await get_instance(hass).async_add_executor_job(_fetch)
-    except (HomeAssistantError, ImportError) as err:
-        _LOGGER.error("读取 recorder 历史失败: %s", err, exc_info=True)
+    except (HomeAssistantError, ImportError):
+        _LOGGER.exception("读取 recorder 历史失败")
         return []
 
     if isinstance(result, dict):
@@ -285,14 +286,14 @@ class MinMaxHistorySensor(SensorEntity, RestoreEntity):
         else:
 
             async def _delayed_ingest(_):
-                if self._attr_native_value is None:
-                    if self._ingest_current_state() and self._attr_native_value is not None:
-                        self.async_write_ha_state()
-                        _LOGGER.debug(
-                            "[%s] 延迟兜底写入: %s",
-                            self.unique_id,
-                            self._attr_native_value,
-                        )
+                # _ingest_current_state 成功即保证 native_value 非 None
+                if self._attr_native_value is None and self._ingest_current_state():
+                    self.async_write_ha_state()
+                    _LOGGER.debug(
+                        "[%s] 延迟兜底写入: %s",
+                        self.unique_id,
+                        self._attr_native_value,
+                    )
 
             self.async_on_remove(async_call_later(self.hass, 2, _delayed_ingest))
 
